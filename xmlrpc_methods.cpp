@@ -2,6 +2,11 @@
 // T-1000
 // John Richards <jrichards@barracuda.com>
 //
+// Implemented by
+// @Authors:
+// John Fonte
+// Michael Hayter
+//
 
 #include <map>
 #include <string>
