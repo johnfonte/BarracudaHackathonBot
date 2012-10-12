@@ -40,7 +40,7 @@ main(int argc, char* argv[])
 
     xmlrpc_c::serverAbyss server(xmlrpc_c::serverAbyss::constrOpt().registryP(&registry).portNumber(port));
 
-    std::cout << "T-1000: Starting on " << port << ". Kill all robots." << std::endl;
+    std::cout << "HAL-9000: Starting on " << port << ". \"I'm sorry, Dave. I'm afraid I can't do that...\"" << std::endl;
     server.run();
 
     return 0;

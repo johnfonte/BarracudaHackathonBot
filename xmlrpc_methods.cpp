@@ -7,6 +7,8 @@
 // John Fonte
 // Michael Hayter
 //
+// Post-Competition Rework by
+// John Fonte
 
 #include <map>
 #include <string>
@@ -18,6 +20,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <algorithm>
+#include <deque>
 
 #include <xmlrpc-c/base.hpp>
 #include <xmlrpc-c/registry.hpp>
@@ -29,176 +32,384 @@ using namespace std;
 using namespace xmlrpc_c;
 
 struct Point {
+
+private:
+    int x;
+    int y;
+
+    int square;
+
+    bool owned;
+    string owner;
+
+public:
     Point() {
         this->x = -1;
         this->y = -1;
+        this->square = -1;
+        this->owned = false;
+        this->owner = "";
+
     }
-    Point(int x, int y) {
+    Point(int x, int y, int square) {
         this->x = x;
         this->y = y;
+        this->square = square;
+        this->owned = false;
+        this->owner = "";
     }
-
-    int x;
-    int y;
+    void setOwner(string owner) {
+        if(owner != "") {
+            this->owned = true;
+            this->owner = owner;
+        } else {
+            this->owned = false;
+            this->owner = "";
+        }
+    }
+    string getOwner() {
+        return this->owner;
+    }
+    bool getIsOwned() {
+        return this->owned;
+    }
+    int getX() {
+        return this->x;
+    }
+    int getY() {
+        return this->y;
+    }
+    int getSquare() {
+        return this->square;
+    }
 };
 
+struct Board
+{
+    map< int, vector<Point*> > bins;
+    vector< vector<Point*> > grid;
+    int boardSize;
+    int credits;
+    int myID;
+    int opponentID;
+    int bid;
+    int squareChoice;
+    bool validPath;
+    bool textOutputAllowed;
+    Board() {
+        this->boardSize = 7;
+        for (int i = 0; i < boardSize; i++) {
+            this->bins[i].resize(this->boardSize);
+        }
+        this->credits = 0;
+        textOutputAllowed = false;
+    }
+    void set(int myID, int opponentID, int credits, vector< vector<value> > originalBoard, bool validPath, bool textOutputAllowed) {
+        this->boardSize = 7;
+        this->myID = myID;
+        this->opponentID = opponentID;
+        this->credits = credits;
+        this->validPath = validPath;
+        this->textOutputAllowed = textOutputAllowed;
+
+        Point* temp;
+        for (int i = 0; i < originalBoard.size(); i++) {
+            for (int j = 0; j < originalBoard[i].size(); j++) {
+                int key = value_int(originalBoard.at(i).at(j));
+                if(this->myID == 0) {
+                    temp = new Point(i, j, key);
+                } else { 
+                    temp = new Point(j, i, key);
+                }
+                this->bins[key/boardSize].at(key%boardSize) = temp;
+                this->grid[i].at(j) = temp;
+                if(textOutputAllowed) cout << key << endl;
+            }
+        }
+
+    }
+    Point* getWest(Point* p) {
+        if(p != NULL && p->getX() > 0) {
+            return grid.at(p->getX()-1).at(p->getY());
+        }
+        return NULL;
+    }
+    Point* getNorthWest(Point* p) {
+        if(p != NULL && p->getX() > 0 && p->getY() > 0) {
+            return grid.at(p->getX()-1).at(p->getY()-1);
+        }
+        return NULL;
+    }
+    Point* getNorth(Point* p) {
+        if(p != NULL && p->getY() > 0) {
+            return grid.at(p->getX()).at(p->getY()-1);
+        }
+        return NULL;
+    }
+    Point* getNorthEast(Point* p) {
+        if(p != NULL && p->getX() < this->boardSize && p->getY() > 0) {
+            return grid.at(p->getX()+1).at(p->getY()-1);
+        }
+        return NULL;
+    }
+    Point* getEast(Point* p) {
+        if(p != NULL && p->getX() < this->boardSize) {
+            return grid.at(p->getX()+1).at(p->getY());
+        }
+        return NULL;
+    }
+    Point* getSouthEast(Point* p) {
+        if(p != NULL && p->getX() < this->boardSize && p->getY() < this->boardSize) {
+            return grid.at(p->getX()+1).at(p->getY()+1);
+        }
+        return NULL;
+    }
+    Point* getSouth(Point* p) {
+        if(p != NULL && p->getY() < this->boardSize) {
+            return grid.at(p->getX()).at(p->getY()+1);
+        }
+        return NULL;
+    }
+    Point* getSouthWest(Point* p) {
+        if(p != NULL && p->getX() > 0 && p->getY() < this->boardSize) {
+            return grid.at(p->getX()-1).at(p->getY()+1);
+        }
+        return NULL;
+    }
+
+};
+
+struct Step
+{
+    Step* last;
+    Point* node;
+    int length;
+    Step(Step* last, Point* node, bool nodeIsOwned) {
+        this->last = last;
+        this->node = node;
+        if(this->last == NULL && nodeIsOwned) {
+            this->length = 0;
+        } else if(this->last == NULL && !nodeIsOwned) {
+            this->length = 1;
+        } else if(nodeIsOwned) {
+            this->length = this->last->length;
+        } else {
+            this->length = this->last->length + 1;
+        }
+    }
+};
+
+
+struct Path{
+    deque<Step*> bfsqueue;
+    vector<int> temporary;
+    vector<int> final;
+    vector<int> bids;
+    int bidLength;
+    int temporarySize;
+    int finalSize;
+    Path() {
+        this->temporarySize = 0;
+        this->finalSize = 0;
+        this->bidLength = 0;
+    }
+    void createBids(int credits) {
+        this->bids.resize(this->bidLength);
+        for(int i=0; i<this->bids.size(); i++) {
+            if(i==this->bids.size()-1) {
+                this->bids[i] = credits;
+            } else {
+                this->bids[i] = credits/this->bids.size();
+                credits = credits - this->bids[i];
+            }
+
+            if(this->bids[i] == 0) {
+                //failsafe
+                //set any bid to be number of credits left if we cannot finish the path
+                this->bids[i] = credits;
+            }
+        }
+    }
+};
+
+///////////////////////// END NEW STRUCTS ////////////////////////////////////
+
+
+
 ///////////////////////// BEGIN GLOBALS ///////////////////////////////////////
-int boardSize = 7;
 
-map< int, vector<Point> > modifiedBoard; // map is 7 bins of 7
+Board board;
 
-map< int, bool> isUsedUs; // map is 0 - 48
-map< int, bool> isUsedThem; // map is 0 - 48
+Path path;
 
-int squaresOwned;
-
-vector<int> tempPath; // temporary path for recursive search
-int tempPathSize = 0;
-
-vector<int> winningPath; // store winning path
-
-bool validPath = false; // to skip search
-
-vector<int> pathFinder[7];
-
-int myID = -1;
-int opponentID = -1;
-
-int numCredits = -1;
 const int MAX_DEPTH = 10;
-int pathDepth = 0;
 
-int isReachable[7][7];
-
-int squareChoice = 0;
-
-int solutionCounter = 0;
-int SOLUTION_MAX = 10; 
-int solutionHeur[49];
-
-int bid;
+bool isReachable[7][7];
 
 ///////////////// END GLOBALS ///////////////////////////////////////////////
 
 
 /////////////////////// BEGIN OUR FUNCTIONS ////////////////////////
 
+
+
 int nextGroup(int groupId) {
-    return ((groupId+1)%boardSize);
+    return ((groupId+1)%board.boardSize);
 }
 
-int dy[] = {-1,0, 1};
-int dx[] = {1, 1, 1};
-
 bool works () {
-    //for each thing in path
-    //   if (exists and is true) andvance
+    // for each thing in path
+    // BFS
 
-    for (int i=0; i < boardSize; i++) 
-        for (int j=0; j<boardSize;j++) 
-            isReachable[i][j] = 0;
 
-    for(int i = 0; i < tempPath.size(); i++ ) {
-        int key = tempPath[i];
+    for(int i = 0; i < path.temporarySize; i++) {
+        // always set temppath to reachable
+        int key = path.temporary[i];
 
-//        cout << "tempPath " << tempPath[i] << endl;
-        int x = modifiedBoard[key/boardSize][key%boardSize].x;
-        int y = modifiedBoard[key/boardSize][key%boardSize].y;
-//        cout << "y = " << y << " x= " << x << endl;
+        int x = board.bins[key/board.boardSize][key%board.boardSize]->getX();
+        int y = board.bins[key/board.boardSize][key%board.boardSize]->getY();
         
-        isReachable[y][x] = -1;
+        isReachable[x][y] = true;
     }
 
-/*
-    cout << "Reachable Grid 1\n";
-    for (int i=0; i < boardSize; i++) {
-        for (int j=0; j<boardSize;j++){ 
-            cout << (isReachable[i][j])  << " ";
-        }
-        cout << endl;
+    for (int i = 0; i < board.boardSize; i++ ) {
+        // start BFS on first column/row
+        // add to deque
+        if(isReachable[0][i])
+            path.bfsqueue.push_back(new Step(NULL, board.grid[0].at(i), board.grid[0].at(i)->getIsOwned()));
     }
-*/
-    for (int i = 0; i < boardSize; i++ ) {
-        if (isReachable[i][0] == -1)
-            isReachable[i][0] = 1;
-    }
-    for (int j = 0; j <boardSize; j++) {
-        for (int i = 0; i < boardSize; i++) {
-            if (isReachable[i][j] == 1) {
-                for(int k=0; k< 3; k++) {
-                    int ny = i + dy[k];
-                    int nx = j + dx[k];
 
-                    if (isReachable[ny][nx] == -1) {
-                        isReachable[ny][nx] = 1;
-                    }
-                }
+    Step* s;
+    while(!path.bfsqueue.empty()) {
+        s = path.bfsqueue.back();
+        path.bfsqueue.pop_back();
+        int sX = s->node->getX();
+        int sY = s->node->getY();
+        isReachable[sX][sY] = false; // remove this piece from further searches, cannot double back
+
+        if(s->node->getX() == board.boardSize) {
+            // got across! put everything (order does not matter) into final path
+            path.bidLength = s->length;
+            while(s != NULL) {
+                path.final.push_back(s->node->getSquare());
+                s = s->last;
+            }
+            return true;
+        } else {
+            Point* tempPoint = board.getWest(s->node);
+            int tX = tempPoint->getX();
+            int tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getNorthWest(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getNorth(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getNorthEast(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getEast(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getSouthEast(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getSouth(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
+            }
+
+            tempPoint = board.getSouthWest(s->node);
+            tX = tempPoint->getX();
+            tY = tempPoint->getY();
+            if(tempPoint != NULL && isReachable[tX][tY] && tempPoint->getIsOwned()) {
+                path.bfsqueue.push_back(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto back for low cost option -- we own it
+            } else {
+                path.bfsqueue.push_front(new Step(s, tempPoint, tempPoint->getIsOwned())); // push onto front for high cost option -- it's open
             }
         }
     }
-/*
-    cout << "Reachable Grid 2\n";
-    for (int i=0; i < boardSize; i++) {
-        for (int j=0; j<boardSize;j++){ 
-            cout << (isReachable[i][j])  << " ";
-        }
-        cout << endl;
-    }
-*/
-    //check if last col has a 1 in it
-    for (int i = 0; i <boardSize; i++) {
-        if (isReachable[i][boardSize-1] == 1) {
-            return true;
-        }
-    }
+    //no path found, queue empty
     return false;
 
 }
 
-void search(int groupId, int depth, int depthLimit, int currentCredits) {
-    if(validPath) return;
-    if(solutionCounter>=SOLUTION_MAX) {
+void search(int groupId, int depth, int depthLimit) {
+    if(board.validPath) return;
+
+    if(depth >= depthLimit) { // termination because solution is too long
         return;
     }
-    if(depth > depthLimit) { // base case, termination
-        return;
-    }
-    if(tempPathSize >= boardSize) {
+    if(path.temporarySize >= board.boardSize) { //only check if path is possibly long enough
         if(works()) {
-            winningPath = tempPath;
-            validPath = true;
-            pathDepth = winningPath.size();
-            solutionCounter++;
-//            cout << "winning path size: " << pathDepth << endl;
-            for (int i = 0; i < pathDepth; i++) {
-                int key = winningPath.at(i);
-                int x = modifiedBoard[key/boardSize].at(key%boardSize).x;
-                int y = modifiedBoard[key/boardSize].at(key%boardSize).y;
-                cout << "i= " << i <<  " x: " << x << " y: " << y << endl;
-            }
+            board.validPath = true;
+            path.finalSize = path.final.size();
+            path.createBids(board.credits);
             return;
         }
     }
-//    cout << "in search: " << groupId << " " << depth << " " << depthLimit << " " << currentCredits << endl;
-    int currentBid = currentCredits/20;
-    if(currentCredits <= 0) {
-        return;
-    }
-    // if found path, return (when 7 or more elements)
-    for(int i=0; i<boardSize; i++) {
-        int squareNumber = i+(groupId*boardSize);
-//        cout << "squareNumber: " << squareNumber << endl;
-        if(!isUsedThem[squareNumber] && !isUsedUs[squareNumber]) {
-            tempPath.push_back(squareNumber);
-            tempPathSize++;
-            isUsedUs[squareNumber] = true;
-            search(nextGroup(groupId), depth+1, depthLimit, currentCredits - currentBid);
-            isUsedUs[squareNumber] = false;
-            tempPath.pop_back();
-            tempPathSize--;
+    if(board.textOutputAllowed) cout << "in search: " << groupId << " " << depth << " " << depthLimit << endl;
+
+    int squaresUsed = 0;
+    // descend into tree with unused elements in an attempt to find path
+    for(int i=0; i<board.boardSize; i++) {
+        int key = i+(groupId*board.boardSize);
+        if(!board.bins[key/board.boardSize][key%board.boardSize]->getIsOwned()) {
+            path.temporary.push_back(key);
+            path.temporarySize++;
+            board.bins[key/board.boardSize][key%board.boardSize]->setOwner("us");
+            search(nextGroup(groupId), depth+1, depthLimit);
+            board.bins[key/board.boardSize][key%board.boardSize]->setOwner("");
+            path.temporary.pop_back();
+            path.temporarySize--;
         } else {
-            // do nothing, continue checking for search
+            // track if all squares in block are occupied
+            squaresUsed++;
         }
+    }
+    // if all squares in block are used, move to next block, do not increase depth, edge case untested
+    if(squaresUsed == 7) {
+        search(nextGroup(groupId), depth, depthLimit);
     }
 }
 
@@ -245,80 +456,31 @@ InitGameMethod::~InitGameMethod()
 void
 InitGameMethod::execute(const paramList& paramList, value* const retval)
 {
+    ///////////////// BEGIN BARRACUDA CODE /////////////////////
     map<string, value> gstate = paramList.getStruct(0);
 
-    // Access params like this:
-    myID = value_int(gstate["idx"]);
-    opponentID = value_int(gstate["opponent_id"]); // this will affect which direction we use
-
-    numCredits = value_int(gstate["credits"]); // sets global with starting credits
-
-    ///////////////// BEGIN BARRACUDA CODE /////////////////////
     // The 'board' needs a little transformation:
     vector<value> unprocessed_board = value_array(gstate["board"]).vectorValueValue();
     vector< vector<value> > originalBoard;
     for (vector<value>::iterator i = unprocessed_board.begin(); i != unprocessed_board.end(); ++i) {
         originalBoard.push_back(value_array(*i).vectorValueValue());
     }
-    ///////////////// END BARRACUDA CODE ///////////////////////
-
-
-
-    for (int i = 0; i < boardSize; i++) {
-        modifiedBoard[i].resize(boardSize);
-    }
-
-    //Create modified board
-
-    for (int i = 0; i < originalBoard.size(); i++) {
-        for (int j = 0; j < originalBoard[i].size(); j++) {
-            int key = value_int(originalBoard.at(i).at(j));
-            if(myID == 0) {
-                modifiedBoard[key/boardSize].at(key%boardSize).x = j;
-                modifiedBoard[key/boardSize].at(key%boardSize).y = i;
-            } else { 
-                modifiedBoard[key/boardSize].at(key%boardSize).x = i;
-                modifiedBoard[key/boardSize].at(key%boardSize).y = j;
-            }
-            isUsedUs[key] = false;
-            isUsedThem[key] = false;
-//            cout << key << endl;
-        }
-    }
-
-    int currentElement;
-    cout << "initgame, game id: " << value_int(gstate["id"]) << endl;
-/*    for(int i=0; i<boardSize; i++) {
-        for (int j = 0; j < boardSize; j++)
-        {
-            cout << "row: " << i << "\tcolumn: " << j << "\toriginal value: ";
-            currentElement = value_int(originalBoard.at(i).at(j));
-            cout << currentElement;
-            currentElement = modifiedBoard[i].at(j).x;
-            cout << "\nx of modified: " << currentElement << "\ty of modified: ";
-            currentElement = modifiedBoard[i].at(j).y;
-            cout << currentElement << "\tmodified value: " << i*7+j << "\n\n";
-        }
-    }
-*/
-    validPath = false;
-    tempPath.clear();
-    tempPathSize = 0;
-    solutionCounter = 0;
-
-/*    for(int i=0; i<7; i++) {
-        for (int j = 0; j < 20; j++) {
-            for(int k=0; k<20; k++) {
-                for(int l=0; l<100; l++) {
-                    alreadyVisited[i][j][k][l] = false;
-                }
-            }
-        }
-    }
-*/
 
     // You can access items from the board like this:
-//    int someNum = value_int(board[0][0]);
+    // int someNum = value_int(board[0][0]);
+
+    ///////////////// END BARRACUDA CODE ///////////////////////
+
+    // Access params like this:
+    int myID = value_int(gstate["idx"]);
+    int opponentID = value_int(gstate["opponent_id"]); // this will affect which direction we use
+    int credits = value_int(gstate["credits"]); // sets starting credits
+    bool validPath = false;
+    bool textOutputAllowed = false;
+
+    board.set(myID, opponentID, credits, originalBoard, validPath, textOutputAllowed);
+
+    if(textOutputAllowed) cout << "initgame, game id: " << value_int(gstate["id"]) << endl;
 
     *retval = value_boolean(true);
 }
@@ -347,57 +509,38 @@ GetBidMethod::execute(const paramList& paramList, value* const retval)
     map<string, value> gstate = paramList.getStruct(1);
     ///////////////// END BARRACUDA CODE ///////////////////////
 
-    // See InitGameMethod::execute for info on how to use params.
-    // Access the offer vector like this:
+    int groupId = value_int(offer[0])/board.boardSize;
 
-    int currentDepth = 0;
-    int groupId = value_int(offer[0])/boardSize;
+    board.bid = 0;
 
-    bid = 0;
-
-
-    int key;
-    for (int i = 0; i < boardSize; i++) {
-        for(int j = 0; j < boardSize; j++) {
-            key = i+boardSize*j;
-            if(isUsedUs[key] == true)
-                tempPath.push_back(key);
-                tempPathSize++;
+    for(int i=0; i<board.boardSize; i++) {
+        for(int j=0; j<board.boardSize; j++) {
+            if(board.grid[i].at(j)->getOwner() == "us") {
+                path.temporary.push_back(board.grid[i].at(j)->getSquare());
+                path.temporarySize++;
+            }
         }
     }
+
     for(int i=0; i<MAX_DEPTH; i++) {
-        search(groupId, 0, i, numCredits);
-    }
-    if(validPath) {
-        cout << "Winning Path:\t";
-        for(int i = 0; i<winningPath.size(); i++) {
-            cout << winningPath.at(i) << "\t";
-        }
-        cout << endl;
+        search(groupId, 0, i);
     }
 
-    squareChoice = -1;
-    for (int i = 0; i < winningPath.size(); i++) {
-        if(winningPath.at(i)/boardSize == groupId && !isUsedUs[winningPath.at(i)] && !isUsedThem[winningPath.at(i)]) {
-            squareChoice = winningPath.at(i);
+    board.squareChoice = -1;
+    for (int i = 0; i < path.finalSize; i++) {
+        int key = path.final.at(i);
+        if(path.final.at(i)/board.boardSize == groupId && !board.bins[key/board.boardSize][key%board.boardSize]->getIsOwned()) {
+            board.squareChoice = key;
             break;
         }
     }
 
-    if(validPath && squareChoice != -1) {
-        if((pathDepth-squaresOwned) > 0) {
-            bid = min(numCredits, numCredits / (pathDepth-squaresOwned));
-        } else if(pathDepth == 2) {
-            bid = numCredits/2 - 1;
-        } else if(pathDepth==1){
-            bid = numCredits;
-        } else {
-            bid = min(numCredits, 9);
-        }
+    if(board.validPath && board.squareChoice != -1) {
+        board.bid = path.bids[0];
     } else {
-        bid = 0;
+        board.bid = 0;
     }
-    *retval = value_int(bid);
+    *retval = value_int(board.bid);
 }
 
 // ------------------------------------------------------------------------
@@ -419,20 +562,18 @@ MakeChoiceMethod::~MakeChoiceMethod()
 void
 MakeChoiceMethod::execute(const paramList& paramList, value* const retval)
 {
-    // update isUsedUs
-    // do tree calculations for next time
+    // make choice based on previous calculation
 
     ///////////////// BEGIN BARRACUDA CODE /////////////////////
     vector<value> offer = paramList.getArray(0);
     map<string, value> gstate = paramList.getStruct(1);
     ///////////////// END BARRACUDA CODE ///////////////////////
 
-    numCredits = numCredits - bid;
+    board.credits = board.credits - board.bid;
     // See InitGameMethod::execute and GetBidMethod::execute for info on how to use params.
-//    cout << "making choice: " << squareChoice << endl;
-    squaresOwned++;
+    if(board.textOutputAllowed) cout << "making choice: " << board.squareChoice << endl;
 
-    *retval = value_int(squareChoice);
+    *retval = value_int(board.squareChoice);
 }
 
 // ------------------------------------------------------------------------
@@ -462,14 +603,14 @@ MoveResultMethod::execute(const paramList& paramList, value* const retval)
     // See other execute methods for more info.
     string result_string = value_string(result["result"]);
     int choice = value_int(result["choice"]);
-//    cout << "SOLUTION RESET" << "\n\n";
-    tempPath.clear();
-    tempPathSize = 0;
-    validPath = false;
+    if(board.textOutputAllowed) cout << "SOLUTION RESET" << "\n\n";
+    path.temporary.clear();
+    path.temporarySize = 0;
+    board.validPath = false;
     if (result_string == "you_chose") {
-        isUsedUs[choice] = true;
+        board.bins[choice/board.boardSize][choice%board.boardSize]->setOwner("us");
     } else if(result_string == "opponent_chose") {
-        isUsedThem[choice] = true;
+        board.bins[choice/board.boardSize][choice%board.boardSize]->setOwner("them");
     }
 
     *retval = value_boolean(true);
@@ -495,8 +636,8 @@ void
 GameResultMethod::execute(const paramList& paramList, value* const retval)
 {
     map<string, value> result = paramList.getStruct(0);
-    cout << "Game Ended:\n";
-    cout << "Winner:\t" << value_int(result["winner"]) << endl;
+    if(board.textOutputAllowed) cout << "Game Ended:\n";
+    if(board.textOutputAllowed) cout << "Winner:\t" << value_int(result["winner"]) << endl;
     *retval = value_boolean(true);
 
 }
